@@ -1,0 +1,893 @@
+
+library(parallel)
+require(multicore)   
+
+
+#install.packages("interval")
+
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("Icens")
+
+
+library(interval)
+library(survival)
+data("bcos",package="interval")
+head(bcos)
+
+
+ # data generate from null distribution ###########
+# lambda=b scale  a=k shape    k=1 exponential
+# S(48)=40%  
+
+
+
+kshape0=1
+
+
+
+#for(case in c(1:5,7:dim(para)[1],6))
+
+timefollow=12
+
+#for(S0z in c(40,60,20,80))
+
+#for(S0z in c(20,60,40))
+#for(S1z in c(S0z+15, S0z+10, S0z+20))
+
+S0z=46
+S1z=60
+
+for(kshape1 in c(1, 1.5, 2))
+
+#for(kshapez in c(1,0.5,2))
+#for(HRz in rev(c(1.4,1.6,1.8,2.0,2.2)))
+{
+outp<-array(,dim=c(10000,5))
+
+powerneed=0.8
+
+S0=S0z/100
+S1=S1z/100
+
+
+#time=48 follow up time
+
+time=timefollow
+
+## time/2=24 month recurel patients, 48 follow up             
+atime=24
+
+
+# monthly check for 6 month
+
+LR=c(c(0:time)*1,2000)
+
+
+#time/para[case,3]
+
+
+n0=12
+
+# start time followup+20% of enrollment time
+
+start=time+ceiling(atime/5)
+end=time+atime-1
+
+
+lambda0=time/(-log(S0))^(1/kshape0)
+lambda1=time/(-log(S1))^(1/kshape1)
+
+lambda0
+lambda1
+
+scale0=lambda0
+scale1=lambda1
+
+#library(OptInterim)
+#param <- c(1, 1.09, 2, 1.40)
+
+#x <- time
+#param<-c(kshape0,lambda0,kshape1,lambda1)
+#weibull.plot(param,x)
+
+
+
+simu=1000
+
+powermax=0.5
+powermin=0.5
+n=n0
+
+num=0
+
+while(powermin<powerneed)
+{
+num=num+1
+n=n+min(round(n*0.3),15)
+print(n)
+###########  TIE  ###
+
+#TIE<-array(,dim=c(simu,4))
+
+#for(i in 1:simu)
+
+TIEf<-function(i)
+{
+
+shape=kshape0
+scale=lambda0
+
+obst=rweibull(n, shape, scale) 
+#u=runif(n, 0, ta)
+
+
+
+po<-findInterval(obst, LR)
+
+data0<-cbind(obst, LR[po],LR[po+1],0)
+
+colnames(data0) <- c("obst","left","right","treatment")
+data0<-data.frame(data0)
+
+
+obst=rweibull(n, shape, scale) 
+#u=runif(n, 0, ta)
+
+po<-findInterval(obst, LR)
+
+data1<-cbind(obst, LR[po],LR[po+1],1)
+
+colnames(data1) <- c("obst","left","right","treatment")
+data1<-data.frame(data1)
+
+data2<-rbind(data0,data1)
+
+
+data2[which(data2[,3]>1990),3]<-Inf
+data2[which(data2[,4]==0),4]<-'C'
+data2[which(data2[,4]==1),4]<-'T'
+
+
+#fit1<-icfit(Surv(left,right,type="interval2")~treatment,data=data2)
+
+
+icout1<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank1",data=data2)
+icout2<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank2",data=data2)
+icout3<-ictest(Surv(left,right,type="interval2")~treatment,scores = "wmw",data=data2)
+#icout4<-ictest(Surv(left,right,type="interval2")~treatment,scores = "normal",data=data2)
+# normal could have missing values,  qnorm(Shat[2:(k + 1)]) : NaNs produced
+TIEout<-c(icout1$statistic,icout2$statistic,icout3$statistic,i)
+return(TIEout)
+}
+
+
+
+pointT3<-c(1:simu)
+
+lpointT3<-length(pointT3)
+
+
+Est100<-mclapply(pointT3, TIEf, mc.cores=60) 
+
+dim(Est100)
+
+aabb<-matrix(unlist(Est100),nrow=lpointT3,byrow=T)
+
+TIE<-aabb
+
+cut1<-quantile(TIE[,1],0.05)
+cut2<-quantile(TIE[,2],0.05)
+cut3<-quantile(TIE[,3],0.05)
+
+
+###########  Power  ##################  ###
+
+#Power<-array(,dim=c(simu,4))
+
+
+
+
+#for(i in 1:simu)
+
+Powerf<-function(i)
+{
+
+obst=rweibull(n, kshape1, scale1) 
+#u=runif(n, 0, ta)
+
+
+po<-findInterval(obst, LR)
+
+data0<-cbind(obst, LR[po],LR[po+1],0)
+
+colnames(data0) <- c("obst","left","right","treatment")
+data0<-data.frame(data0)
+
+
+obst=rweibull(n, kshape0, scale0) 
+#u=runif(n, 0, ta)
+
+po<-findInterval(obst, LR)
+
+data1<-cbind(obst, LR[po],LR[po+1],1)
+
+colnames(data1) <- c("obst","left","right","treatment")
+data1<-data.frame(data1)
+
+data2<-rbind(data0,data1)
+
+
+data2[which(data2[,3]>1990),3]<-Inf
+data2[which(data2[,4]==0),4]<-'C'
+data2[which(data2[,4]==1),4]<-'T'
+
+
+#fit1<-icfit(Surv(left,right,type="interval2")~treatment,data=data2)
+
+
+icout1<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank1",data=data2)
+icout2<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank2",data=data2)
+icout3<-ictest(Surv(left,right,type="interval2")~treatment,scores = "wmw",data=data2)
+#icout4<-ictest(Surv(left,right,type="interval2")~treatment,scores = "normal",data=data2)
+# normal could have missing values,  qnorm(Shat[2:(k + 1)]) : NaNs produced
+Powerout<-c(icout1$statistic,icout2$statistic,icout3$statistic,i)
+return(Powerout)
+}
+
+
+pointT3<-c(1:simu)
+
+lpointT3<-length(pointT3)
+
+
+Est100<-mclapply(pointT3, Powerf, mc.cores=60) 
+
+dim(Est100)
+
+aabb<-matrix(unlist(Est100),nrow=lpointT3,byrow=T)
+
+Power<-aabb
+
+#print(head(Power))
+
+power1<-sum(Power[,1]<=cut1)/simu
+power2<-sum(Power[,2]<=cut1)/simu
+power3<-sum(Power[,3]<=cut1)/simu
+
+powermax<-max(power1,power2,power3)
+powermin<-min(power1,power2,power3)
+outp[num,]<-c(n,power1,power2,power3,powermin)
+print(c(n,power1,power2,power3,powermax))
+}
+
+outp[c(1:num),]
+
+
+n1a=n
+none=n1a
+
+print(n1a)
+
+#################################    two stage designs    ##################
+
+simu=10000
+
+outfinal<-array(,dim=c(1520,18))
+
+outj=0
+
+
+allbelow=3
+n=ceiling(max(round(none*1.1),none+15))
+
+#n=30
+
+num=0
+
+while(allbelow>0.5)
+{
+
+
+num=num+1
+n=n-1
+
+allbelow=0
+
+print(n)
+ 
+###########  TIE  ###
+
+#TIE<-array(,dim=c(simu,4*(end-start+2)))
+
+#for(i in 1:simu)
+
+TIEf2<-function(i)
+{
+TIEout<-c()
+
+shape=kshape0
+scale=lambda0
+
+obst=rweibull(n, shape, scale) 
+#u=runif(n, 0, ta)
+
+po<-findInterval(obst, LR)
+
+data0<-cbind(obst, LR[po],LR[po+1],0)
+
+colnames(data0) <- c("obst","left","right","treatment")
+data0<-data.frame(data0)
+
+
+obst=rweibull(n, shape, scale) 
+#u=runif(n, 0, ta)
+
+po<-findInterval(obst, LR)
+
+data1<-cbind(obst, LR[po],LR[po+1],1)
+
+colnames(data1) <- c("obst","left","right","treatment")
+data1<-data.frame(data1)
+
+data2<-rbind(data0,data1)
+
+# for one stage use
+data2a<-data2
+
+data2[which(data2[,3]>1990),3]<-Inf
+data2[which(data2[,4]==0),4]<-'C'
+data2[which(data2[,4]==1),4]<-'T'
+
+
+
+#fit1<-icfit(Surv(left,right,type="interval2")~treatment,data=data2)
+
+
+icout1<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank1",data=data2)
+icout2<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank2",data=data2)
+icout3<-ictest(Surv(left,right,type="interval2")~treatment,scores = "wmw",data=data2)
+#icout4<-ictest(Surv(left,right,type="interval2")~treatment,scores = "normal",data=data2)
+# normal could have missing values,  qnorm(Shat[2:(k + 1)]) : NaNs produced
+TIEout[c(1:4)]<-c(icout1$statistic,icout2$statistic,icout3$statistic,i)
+
+
+## first stage test statis  ###
+
+
+# atime=enroll time, time=follow up time
+
+#start=time+ceiling(atime/10)
+#end=time+atime-1
+
+## randomize Control and Treatment patients
+data2a$enroll<-sample((c(0:(2*n-1))+0.5)/n/2*atime)
+data2a$follow<-data2a$enroll+data2a$obst
+
+numj=0
+for(j in start:end)
+{
+numj=numj+1
+
+#data2f<-data2a
+
+data2f<-data2a[which(data2a$enroll<j),]
+
+data2f$obsta<-data2f$obst
+data2f$lefta<-data2f$left
+data2f$righta<-data2f$right
+
+# time1 check point to redefine left and right
+data2f[which(data2f[,6]>(j+0.001)),3]<-Inf
+
+# shift left to new if the check time is before original left
+po<-findInterval((j-data2f$enroll), LR)
+data2f$lefta<-LR[po]
+data2f$time1<-j
+data2g<-data2f[,c(2,8)]
+data2f$righta<-apply(data2g, 1, min)
+data2f$left<-data2f$righta
+data2f
+
+
+data2f[which(data2f[,4]==0),4]<-'C'
+data2f[which(data2f[,4]==1),4]<-'T'
+
+## only keep patients enrolled before time=j
+
+
+
+icout1<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank1",data=data2f)
+icout2<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank2",data=data2f)
+icout3<-ictest(Surv(left,right,type="interval2")~treatment,scores = "wmw",data=data2f)
+TIEout[(c(1:4)+numj*4)]<-c(icout1$statistic,icout2$statistic,icout3$statistic,j)
+
+}
+return(TIEout)
+}
+
+
+
+
+pointT3<-c(1:simu)
+
+lpointT3<-length(pointT3)
+
+
+Est100<-mclapply(pointT3, TIEf2, mc.cores=60) 
+
+dim(Est100)
+
+aabb<-matrix(unlist(Est100),nrow=lpointT3,byrow=T)
+
+TIE<-aabb
+
+
+
+###########  Power two stage  ##################  ###
+
+#Power<-array(,dim=c(simu,4*(end-start+2)))
+
+
+
+#for(i in 1:simu)
+
+Powerf2<-function(i)
+{
+Powerout<-c()
+
+obst=rweibull(n, kshape1, scale1) 
+#u=runif(n, 0, ta)
+
+po<-findInterval(obst, LR)
+
+data0<-cbind(obst, LR[po],LR[po+1],0)
+
+colnames(data0) <- c("obst","left","right","treatment")
+data0<-data.frame(data0)
+
+
+obst=rweibull(n, kshape0, scale0) 
+#u=runif(n, 0, ta)
+
+po<-findInterval(obst, LR)
+
+data1<-cbind(obst, LR[po],LR[po+1],1)
+
+colnames(data1) <- c("obst","left","right","treatment")
+data1<-data.frame(data1)
+
+data2<-rbind(data0,data1)
+
+# for one stage use
+data2a<-data2
+
+data2[which(data2[,3]>1990),3]<-Inf
+data2[which(data2[,4]==0),4]<-'C'
+data2[which(data2[,4]==1),4]<-'T'
+
+
+
+#fit1<-icfit(Surv(left,right,type="interval2")~treatment,data=data2)
+
+
+icout1<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank1",data=data2)
+icout2<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank2",data=data2)
+icout3<-ictest(Surv(left,right,type="interval2")~treatment,scores = "wmw",data=data2)
+#icout4<-ictest(Surv(left,right,type="interval2")~treatment,scores = "normal",data=data2)
+# normal could have missing values,  qnorm(Shat[2:(k + 1)]) : NaNs produced
+Powerout[c(1:4)]<-c(icout1$statistic,icout2$statistic,icout3$statistic,i)
+
+
+## first stage test statis  ###
+
+
+# atime=enroll time, time=follow up time
+
+#start=time+ceiling(atime/10)
+#end=time+atime-1
+
+## randomize Control and Treatment patients
+data2a$enroll<-sample((c(0:(2*n-1))+0.5)/n/2*atime)
+data2a$follow<-data2a$enroll+data2a$obst
+
+numj=0
+for(j in start:end)
+{
+numj=numj+1
+
+
+#data2f<-data2a
+
+data2f<-data2a[which(data2a$enroll<j),]
+
+data2f$obsta<-data2f$obst
+data2f$lefta<-data2f$left
+data2f$righta<-data2f$right
+
+# time1 check point to redefine left and right
+data2f[which(data2f[,6]>(j+0.001)),3]<-Inf
+
+# shift left to new if the check time is before original left
+po<-findInterval((j-data2f$enroll), LR)
+data2f$lefta<-LR[po]
+data2g<-data2f[,c(2,8)]
+data2f$righta<-apply(data2g, 1, min)
+data2f$left<-data2f$righta
+data2f
+
+
+data2f[which(data2f[,4]==0),4]<-'C'
+data2f[which(data2f[,4]==1),4]<-'T'
+
+icout1<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank1",data=data2f)
+icout2<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank2",data=data2f)
+icout3<-ictest(Surv(left,right,type="interval2")~treatment,scores = "wmw",data=data2f)
+Powerout[(c(1:4)+numj*4)]<-c(icout1$statistic,icout2$statistic,icout3$statistic,j)
+
+}
+return(Powerout)
+}
+
+
+
+pointT3<-c(1:simu)
+
+lpointT3<-length(pointT3)
+
+
+Est100<-mclapply(pointT3, Powerf2, mc.cores=60) 
+
+dim(Est100)
+
+aabb<-matrix(unlist(Est100),nrow=lpointT3,byrow=T)
+
+Power<-aabb
+
+head(TIE)
+head(Power)
+
+
+
+
+## TIE Power for the simulated data to compute c1 lower bound under Ha P(z1<= c1)>=0.8
+
+powermin2<-90
+
+for(k in c(1:3))
+{
+
+cut1<-quantile(TIE[,1],0.05)
+cut2<-quantile(TIE[,2],0.05)
+cut3<-quantile(TIE[,3],0.05)
+
+power1<-sum(Power[,1]<=cut1)/simu
+power2<-sum(Power[,2]<=cut1)/simu
+power3<-sum(Power[,3]<=cut1)/simu
+
+powermax2<-max(power1,power2,power3)
+
+output1<-array(,dim=c(3*5*320*(end-start+1),18))
+
+alphaone=0.05/2
+
+num0=0
+
+numj=0
+for(j in start:end)
+{
+numj=numj+1
+c1lower<-quantile(Power[,k+numj*4],powerneed)
+#c1lower<-quantile(TIE[,k+numj*4],alphaone)
+c1a<-round(c1lower,digits=2)*100
+c1b<-2.00*100
+
+enrollrate=n/atime
+
+n1s<-floor(enrollrate*j)
+
+for(c1 in c1a:c1b)
+{
+c1v<-c1/100
+
+tempa<-sum(TIE[,k+numj*4]<(c1v+0.0001),na.rm=T)/simu
+if(tempa<0.05){c=20}else{
+
+findc<-function(c)
+{
+temp<-sum(TIE[,k+numj*4]<(c1v+0.0001) & TIE[,k]<(c+0.0001))/simu
+outv<-(temp-0.05)^3
+return(outv)
+}
+out<-uniroot(findc,lower=(-20),upper=20)
+
+#optimize(findc,lower=(-20),upper=20)
+
+c<-out$root
+                           }
+powerc<-sum(Power[,k+numj*4]<(c1v+0.0001) & Power[,k]<(c+0.0001))/simu
+
+
+if(powerc>powerneed)
+{
+
+tiec<-sum(TIE[,k+numj*4]<(c1v+0.0001) & TIE[,k]<(c+0.0001))/simu
+PET<-sum(TIE[,k+numj*4]>(c1v+0.0001))/simu
+ETSL<-j+(1-PET)*(atime+time-j)
+enrollrate=n/atime
+
+ESS<-n1s+(1-PET)*(n-n1s)
+
+if(num0>9.5)
+{
+ESSmin<-min(output1[c(1:num0),3])
+}
+
+if(num0<12.5)
+{
+num0=num0+1
+outvalue<-c(atime,time,ESS,n,j,c1v,c,tiec,powerc,PET,ETSL,k,cut1,cut2,cut3,power1,power2,power3)
+output1[num0,]<-outvalue
+}
+
+if(num0>12.5) 
+{
+if(ESS<ESSmin)
+{
+num0=num0+1
+outvalue<-c(atime,time,ESS,n,j,c1v,c,tiec,powerc,PET,ETSL,k,cut1,cut2,cut3,power1,power2,power3)
+output1[num0,]<-outvalue
+}
+}
+
+#print(outvalue)
+#print(num0)
+}
+
+}
+
+}
+
+print(num0)
+
+if(num0>1.5)
+{ 
+allbelow=allbelow+1
+outj=outj+1
+output1<-output1[order(output1[,3]),]
+#head(output1)
+outfinal[outj,]<-output1[1,]
+print(outfinal[outj,])
+}else{
+outj=outj+1
+outvaluea<-c(atime,time,100,n,100,100,100,100,100,100,100,k,cut1,cut2,cut3,power1,power2,power3)
+outfinal[outj,]<-outvaluea
+#print(outfinal[outj,])
+}
+
+
+}
+
+outputfinal<-outfinal[c(1:outj),]
+
+kshape0v=kshape0*100
+kshape1v=kshape1*100
+
+print(12)
+ccc <- paste("/home/gshan/SurvInterval/NPH_ETSL","k",kshape0v,"k",kshape1v,"at",atime,"T",time,"S",simu,"a.txt",sep="") 
+
+filena<-ccc
+#print(filena)
+#print(outputfinal)
+write.table(outputfinal,filena,row.names=F,col.names=F,append=F)
+
+}  ## end of allbelow>0.5
+
+print(powermax2)
+
+
+
+## powermin2 for one stage designs less than 0.8, then seach for one stage mini sample size
+
+if(powermax2>(powerneed*0.97))
+{
+
+
+num=num+1
+n=n-1
+
+print(n)
+
+
+###########  TIE  ###
+
+#TIE<-array(,dim=c(simu,4))
+
+#for(i in 1:simu)
+
+TIEf<-function(i)
+{
+
+shape=kshape0
+scale=lambda0
+
+obst=rweibull(n, shape, scale) 
+#u=runif(n, 0, ta)
+
+
+
+po<-findInterval(obst, LR)
+
+data0<-cbind(obst, LR[po],LR[po+1],0)
+
+colnames(data0) <- c("obst","left","right","treatment")
+data0<-data.frame(data0)
+
+
+obst=rweibull(n, shape, scale) 
+#u=runif(n, 0, ta)
+
+po<-findInterval(obst, LR)
+
+data1<-cbind(obst, LR[po],LR[po+1],1)
+
+colnames(data1) <- c("obst","left","right","treatment")
+data1<-data.frame(data1)
+
+data2<-rbind(data0,data1)
+
+
+data2[which(data2[,3]>1990),3]<-Inf
+data2[which(data2[,4]==0),4]<-'C'
+data2[which(data2[,4]==1),4]<-'T'
+
+
+#fit1<-icfit(Surv(left,right,type="interval2")~treatment,data=data2)
+
+
+icout1<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank1",data=data2)
+icout2<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank2",data=data2)
+icout3<-ictest(Surv(left,right,type="interval2")~treatment,scores = "wmw",data=data2)
+#icout4<-ictest(Surv(left,right,type="interval2")~treatment,scores = "normal",data=data2)
+# normal could have missing values,  qnorm(Shat[2:(k + 1)]) : NaNs produced
+TIEout<-c(icout1$statistic,icout2$statistic,icout3$statistic,i)
+return(TIEout)
+}
+
+
+
+pointT3<-c(1:simu)
+
+lpointT3<-length(pointT3)
+
+
+Est100<-mclapply(pointT3, TIEf, mc.cores=60) 
+
+dim(Est100)
+
+aabb<-matrix(unlist(Est100),nrow=lpointT3,byrow=T)
+
+TIE<-aabb
+
+cut1<-quantile(TIE[,1],0.05)
+cut2<-quantile(TIE[,2],0.05)
+cut3<-quantile(TIE[,3],0.05)
+
+
+###########  Power  ##################  ###
+
+#Power<-array(,dim=c(simu,4))
+
+
+
+#for(i in 1:simu)
+
+Powerf<-function(i)
+{
+
+obst=rweibull(n, kshape1, scale1) 
+#u=runif(n, 0, ta)
+
+
+po<-findInterval(obst, LR)
+
+data0<-cbind(obst, LR[po],LR[po+1],0)
+
+colnames(data0) <- c("obst","left","right","treatment")
+data0<-data.frame(data0)
+
+
+obst=rweibull(n, kshape0, scale0) 
+#u=runif(n, 0, ta)
+
+po<-findInterval(obst, LR)
+
+data1<-cbind(obst, LR[po],LR[po+1],1)
+
+colnames(data1) <- c("obst","left","right","treatment")
+data1<-data.frame(data1)
+
+data2<-rbind(data0,data1)
+
+
+data2[which(data2[,3]>1990),3]<-Inf
+data2[which(data2[,4]==0),4]<-'C'
+data2[which(data2[,4]==1),4]<-'T'
+
+
+#fit1<-icfit(Surv(left,right,type="interval2")~treatment,data=data2)
+
+
+icout1<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank1",data=data2)
+icout2<-ictest(Surv(left,right,type="interval2")~treatment,scores = "logrank2",data=data2)
+icout3<-ictest(Surv(left,right,type="interval2")~treatment,scores = "wmw",data=data2)
+#icout4<-ictest(Surv(left,right,type="interval2")~treatment,scores = "normal",data=data2)
+# normal could have missing values,  qnorm(Shat[2:(k + 1)]) : NaNs produced
+Powerout<-c(icout1$statistic,icout2$statistic,icout3$statistic,i)
+return(Powerout)
+}
+
+
+pointT3<-c(1:simu)
+
+lpointT3<-length(pointT3)
+
+
+Est100<-mclapply(pointT3, Powerf, mc.cores=60) 
+
+dim(Est100)
+
+aabb<-matrix(unlist(Est100),nrow=lpointT3,byrow=T)
+
+Power<-aabb
+
+#print(head(Power))
+
+power1<-sum(Power[,1]<=cut1)/simu
+power2<-sum(Power[,2]<=cut1)/simu
+power3<-sum(Power[,3]<=cut1)/simu
+
+powermax2<-max(power1,power2,power3)
+powermin2<-min(power1,power2,power3)
+
+print(c(n,power1,power2,power3,powermax2,powermin2))
+
+
+outvalue<-c(atime,time,100,n,100,100,100,100,100,100,100,1,cut1,cut2,cut3,power1,power2,power3)
+
+outj=outj+1
+outfinal[outj,]<-outvalue
+print(outfinal[outj,])
+outvalue<-c(atime,time,100,n,100,100,100,100,100,100,100,2,cut1,cut2,cut3,power1,power2,power3)
+
+outj=outj+1
+outfinal[outj,]<-outvalue
+print(outfinal[outj,])
+outvalue<-c(atime,time,100,n,100,100,100,100,100,100,100,3,cut1,cut2,cut3,power1,power2,power3)
+
+outj=outj+1
+outfinal[outj,]<-outvalue
+#print(outfinal[outj,])
+
+outputfinal<-outfinal[c(1:outj),]
+
+
+kshape0v=kshape0*100
+kshape1v=kshape1*100
+
+print(123)
+ccc <- paste("/home/gshan/SurvInterval/ETSL","k",kshape0v,"k",kshape1v,"at",atime,"T",time,"S",simu,"NPHa.txt",sep="") 
+filena<-ccc
+#print(filena)
+#print(outputfinal)
+write.table(outputfinal,filena,row.names=F,col.names=F,append=F)
+
+
+
+
+
+}  ## end of powermin2<powerneed
+
+
+}
